@@ -5,14 +5,15 @@ use clap::Parser;
     name = "stonk",
     author,
     version,
-    about = "CLI tool to fetch Yahoo Finance metrics for AI stock analysis"
+    about = "Dense, token-efficient financial CLI: valuation metrics, price history, SEC EDGAR filings, transcripts, and corporate bonds for AI agents & LLMs",
+    after_help = "Examples:\n  stonk NVDA                               # Basic valuation metrics (JSON)\n  stonk TSM -H 5y --ai                     # 5-year monthly price history formatted for LLM\n  stonk AAPL -S 10-K -p --ai               # Parse SEC 10-K into markdown tables & MD&A\n  stonk META -t -q Q2 -y 2026 --ai         # Fetch Q2 2026 earnings call transcript\n  stonk -b US30303M8B15 --ai               # Corporate bond yield, coupon, and maturity quote\n  stonk -b META --ai                       # List all corporate bond issues for ticker\n  stonk MSFT --compact                     # Single-line compact JSON output"
 )]
 pub struct Args {
-    /// Stock Ticker symbol (e.g. TSM, MU, META, NVDA)
+    /// Stock ticker symbol (e.g. NVDA, TSM, AAPL, META)
     #[arg(required_unless_present_any = ["bond", "sec"])]
     pub ticker: Option<String>,
 
-    /// Fetch corporate bond metrics for a ticker or CUSIP/ISIN (e.g. META, US30303M8B15)
+    /// Fetch corporate bond intelligence for a ticker or CUSIP/ISIN (e.g. META, US30303M8B15)
     #[arg(short = 'b', long, value_name = "BOND")]
     pub bond: Option<String>,
 
@@ -24,7 +25,7 @@ pub struct Args {
     #[arg(short = 'p', long, default_value_t = false)]
     pub parse: bool,
 
-    /// Fetch earnings call transcript for ticker
+    /// Fetch quarterly earnings call transcript
     #[arg(short = 't', long, default_value_t = false)]
     pub transcript: bool,
 
@@ -36,11 +37,11 @@ pub struct Args {
     #[arg(short = 'y', long, value_name = "YEAR")]
     pub year: Option<i32>,
 
-    /// Fetch historical price data (e.g. 1y, 2y, 5y, 10y, max)
+    /// Fetch historical monthly price candles (e.g. 1y, 2y, 5y, 10y, max) [default: 1y]
     #[arg(short = 'H', long, value_name = "RANGE", num_args = 0..=1, default_missing_value = "1y")]
     pub history: Option<String>,
 
-    /// Format output specifically as a prompt for AI LLMs
+    /// Format output specifically as a prompt container for AI LLMs
     #[arg(long, default_value_t = false)]
     pub ai: bool,
 
