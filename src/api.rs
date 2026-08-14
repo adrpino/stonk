@@ -72,11 +72,13 @@ pub async fn fetch_yahoo_chart(
     client: &reqwest::Client,
     ticker: &str,
     range: &str,
+    interval: &str,
 ) -> Result<Value> {
     let url = format!(
-        "https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval=1mo",
+        "https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval={}",
         ticker.to_uppercase(),
-        range
+        range,
+        interval
     );
 
     let res = client.get(&url).send().await?.json::<Value>().await?;

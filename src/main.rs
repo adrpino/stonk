@@ -1,5 +1,6 @@
 mod api;
 mod bonds;
+mod chart;
 mod cik;
 mod dossier;
 mod sec;
@@ -11,12 +12,13 @@ use std::io::{self, Write};
 use anyhow::{Result, bail};
 use api::{create_client, fetch_yahoo_chart, fetch_yahoo_summary};
 use bonds::fetch_bonds;
+use chart::{auto_interval_for_range, render_terminal_chart};
 use clap::Parser;
 use dossier::{append_history_to_dossier, extract_ai_dossier};
 use reqwest::Client;
 use sec::fetch_sec_filing;
 use transcripts::fetch_wsb_transcript;
-use types::{BondArgs, Cli, Commands, QuoteArgs, SecArgs, TranscriptArgs};
+use types::{BondArgs, ChartArgs, Cli, Commands, QuoteArgs, SecArgs, TranscriptArgs};
 
 fn safe_println(content: &str) {
     let stdout = io::stdout();
@@ -31,12 +33,26 @@ fn safe_println(content: &str) {
     }
 }
 
+async fn handle_chart(client: &Client, args: &ChartArgs) -> Result<()> {
+    let ticker = &args.ticker;
+    let range = &args.range;
+    let interval = args
+        .interval
+        .as_deref()
+        .unwrap_or_else(|| auto_interval_for_range(range));
+
+    let chart_data = fetch_yahoo_chart(client, ticker, range, interval).await?;
+    let rendered = render_terminal_chart(ticker, range, interval, &chart_data, 60, 10)?;
+    safe_println(&rendered);
+    Ok(())
+}
+
 async fn handle_quote(client: &Client, args: &QuoteArgs, ai: bool, compact: bool) -> Result<()> {
     let ticker = &args.ticker;
     let (raw_data, chart_res) = if let Some(range) = &args.history {
         let (s, c) = tokio::join!(
             fetch_yahoo_summary(client, ticker),
-            fetch_yahoo_chart(client, ticker, range)
+            fetch_yahoo_chart(client, ticker, range, "1mo")
         );
         (s?, Some(c?))
     } else {
@@ -165,6 +181,7 @@ async fn main() -> Result<()> {
             handle_transcript(&client, args, cli.ai, cli.compact).await
         }
         Some(Commands::Bond(args)) => handle_bond(&client, args, cli.ai, cli.compact).await,
+        Some(Commands::Chart(args)) => handle_chart(&client, args).await,
         None => {
             if let Some(ticker) = cli.ticker {
                 let quote_args = QuoteArgs {

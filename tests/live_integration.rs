@@ -219,6 +219,42 @@ fn test_live_transcript_apple() {
 
 #[test]
 #[ignore = "live network integration test"]
+fn test_live_chart_apple_1mo() {
+    let output = Command::cargo_bin("stonk")
+        .unwrap()
+        .args(["chart", "AAPL"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "Command failed: {:?}", output);
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout_str.contains("AAPL · USD"));
+    assert!(stdout_str.contains("High:"));
+    assert!(stdout_str.contains("Low:"));
+    assert!(stdout_str.contains("Interval: 1d"));
+    assert!(stdout_str.contains('┤') || stdout_str.contains('─'));
+}
+
+#[test]
+#[ignore = "live network integration test"]
+fn test_live_chart_nvda_5d() {
+    let output = Command::cargo_bin("stonk")
+        .unwrap()
+        .args(["chart", "NVDA", "5d", "-i", "15m"])
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(output.status.success(), "Command failed: {:?}", output);
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout_str.contains("NVDA · USD"));
+    assert!(stdout_str.contains("Interval: 15m"));
+    assert!(stdout_str.contains('┤') || stdout_str.contains('─'));
+}
+
+#[test]
+#[ignore = "live network integration test"]
 fn test_live_bond_company_name_apple() {
     let output = Command::cargo_bin("stonk")
         .unwrap()

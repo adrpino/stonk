@@ -142,6 +142,28 @@ pub enum Commands {
         after_help = "Examples:\n  stonk bond META --ai\n  stonk bond US30303M8B15 --ai\n  stonk bond AAPL --compact"
     )]
     Bond(BondArgs),
+
+    /// Render an interactive ASCII/Unicode price chart in the terminal
+    #[command(
+        name = "chart",
+        about = "Render an interactive ASCII/Unicode price chart in the terminal",
+        after_help = "Examples:\n  stonk chart AAPL          # 1-month daily candle chart\n  stonk chart NVDA 5d       # 5-day intraday chart\n  stonk chart TSM 1y        # 1-year weekly trend\n  stonk chart META 5y       # 5-year monthly macro chart"
+    )]
+    Chart(ChartArgs),
+}
+
+#[derive(clap::Args, Debug, PartialEq)]
+pub struct ChartArgs {
+    /// Stock ticker symbol (e.g. AAPL, NVDA, TSM)
+    pub ticker: String,
+
+    /// Time range (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, max)
+    #[arg(value_name = "RANGE", default_value = "1mo")]
+    pub range: String,
+
+    /// Interval override (e.g. 5m, 15m, 1h, 1d, 1wk, 1mo)
+    #[arg(short = 'i', long, value_name = "INTERVAL")]
+    pub interval: Option<String>,
 }
 
 #[derive(clap::Args, Debug, PartialEq)]
@@ -395,6 +417,32 @@ mod tests {
             cli.command,
             Some(Commands::Bond(BondArgs {
                 query: "US30303M8B15".to_string(),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_subcommand_chart_default_range() {
+        let cli = Cli::try_parse_from(["stonk", "chart", "AAPL"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Some(Commands::Chart(ChartArgs {
+                ticker: "AAPL".to_string(),
+                range: "1mo".to_string(),
+                interval: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_subcommand_chart_custom_range_and_interval() {
+        let cli = Cli::try_parse_from(["stonk", "chart", "NVDA", "5d", "-i", "15m"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Some(Commands::Chart(ChartArgs {
+                ticker: "NVDA".to_string(),
+                range: "5d".to_string(),
+                interval: Some("15m".to_string()),
             }))
         );
     }

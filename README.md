@@ -1,16 +1,17 @@
 # `stonk` 📈
 
-A high-performance Rust CLI utility that aggregates financial valuation metrics, multi-year historical price trends, SEC EDGAR filings, earnings call transcripts, and corporate bond intelligence—formatted specifically for AI LLM prompt pipelines and automated investment research.
+A high-performance Rust CLI utility that aggregates financial valuation metrics, multi-year historical price trends, terminal ASCII/Unicode price charts, SEC EDGAR filings, earnings call transcripts, and corporate bond intelligence—formatted specifically for AI LLM prompt pipelines and human visual lookup.
 
 ---
 
 ## Features
 
+- **Terminal Visual Price Charts (`stonk chart`):** High-resolution Unicode/ASCII price line charts directly in the terminal with price axis levels, percentage changes, and high/low indicators.
 - **Valuation & Fundamentals (`stonk quote` / `stonk <TICKER>`):** Trailing/Forward P/E, PEG, EV/EBITDA, Price/Sales, Price/Book, operating margins, free cash flow, return on equity, and upcoming earnings dates.
 - **Historical Price Trends (`-H, --history`):** Token-optimized monthly candles (`1y`, `2y`, `5y`, `10y`, `max`) with calculated performance metrics (52-week drawdown, 1-year and 5-year returns) consuming `< 500` tokens for 5 years of data.
 - **SEC EDGAR Filings (`stonk sec`):** Real-time lookup of `10-K`, `10-Q`, `8-K`, `4`, `S-1`, `S-3`, `6-K`, `20-F` filings with direct document URLs. Automatically parses filing HTML into clean markdown financial tables and MD&A commentary (`-p, --parse`).
 - **Earnings Call Transcripts (`stonk transcript`):** Formatted quarterly earnings call transcripts with executive remarks and analyst Q&A sections (`-q Q3 -y 2026`).
-- **Corporate Bond Intelligence (`stonk bond`):** Scrapes corporate debt data by stock ticker or ISIN/CUSIP (coupon rate, maturity date, current price, and Yield to Maturity).
+- **Corporate Bond Intelligence (`stonk bond`):** Scrapes live corporate debt offerings by stock ticker or ISIN/CUSIP (coupon rate, maturity date, current price, and Yield to Maturity).
 - **AI-First Mode (`--ai`):** Wraps data in clean markdown prompt containers optimized for direct piping into LLM CLIs (`opencode`, `claude`, `gemini-cli`).
 - **Resilient Network Layer:** Handles Yahoo session cookies and crumbs, browser Client Hints (`Sec-CH-UA`), SEC EDGAR User-Agent conventions, and broken pipe signals gracefully.
 
@@ -26,7 +27,23 @@ cargo install --path .
 
 ## Commands & Usage
 
-### 1. Stock Valuation & Price History (`quote`)
+### 1. Terminal Visual Price Charts (`chart`)
+
+```bash
+# 1-month daily candle chart by default
+stonk chart AAPL
+
+# 5-day intraday chart with 15m intervals
+stonk chart NVDA 5d -i 15m
+
+# 1-year weekly trend
+stonk chart TSM 1y
+
+# 5-year macro price history
+stonk chart META 5y
+```
+
+### 2. Stock Valuation & Price History (`quote`)
 
 ```bash
 # Pretty-printed JSON dossier (shortcut)
@@ -42,7 +59,7 @@ stonk quote MU -H 5y --ai
 stonk quote NVDA --compact
 ```
 
-### 2. SEC EDGAR Filings (`sec`)
+### 3. SEC EDGAR Filings (`sec`)
 
 ```bash
 # Retrieve latest 10-Q filing metadata and SEC archive link
@@ -55,7 +72,7 @@ stonk sec AAPL 10-K
 stonk sec AAPL 10-K -p --ai
 ```
 
-### 3. Earnings Call Transcripts (`transcript`)
+### 4. Earnings Call Transcripts (`transcript`)
 
 ```bash
 # Latest earnings call transcript (defaults to Q3 2026)
@@ -65,17 +82,17 @@ stonk transcript MSFT --ai
 stonk transcript GOOGL -q Q2 -y 2026 --ai
 ```
 
-### 4. Corporate Bonds & Debt Analysis (`bond`)
+### 5. Corporate Bonds & Debt Analysis (`bond`)
 
 ```bash
 # List all active corporate bonds for a company
 stonk bond META --ai
 
 # Look up a specific bond by ISIN / CUSIP
-stonk bond US30303M8B15 --ai
+stonk bond US037833DB33 --ai
 ```
 
-### 5. Piping to AI CLI Agents
+### 6. Piping to AI CLI Agents
 
 ```bash
 # Comprehensive valuation & bull/bear thesis
@@ -104,10 +121,11 @@ stonk bond AAPL --ai | opencode "Evaluate Apple's corporate bond maturities and 
 
 | Subcommand | Arguments & Flags | Description |
 |---|---|---|
+| **`chart`** | `<TICKER> [RANGE] [-i <INTERVAL>]` | Render an ASCII/Unicode price chart in terminal (`1d`, `5d`, `1mo`, `3mo`, `6mo`, `1y`, `5y`, `max`). |
 | **`quote`** | `<TICKER> [-H <RANGE>]` | Valuation fundamentals and historical monthly price candles (`1y`, `2y`, `5y`, `10y`, `max`). |
 | **`sec`** | `<TICKER> [FORM] [-p, --parse]` | SEC filing metadata and HTML table/MD&A parsing (`10-K`, `10-Q`, `8-K`, `4`, `S-1`, `S-3`, `6-K`, `20-F`). |
 | **`transcript`** | `<TICKER> [-q <QUARTER>] [-y <YEAR>]` | Quarterly earnings call transcripts (`Q1`, `Q2`, `Q3`, `Q4`, default year `2026`). |
-| **`bond`** | `<QUERY>` | Corporate bond yield and maturity lookup by ticker (`META`) or ISIN/CUSIP (`US30303M8B15`). |
+| **`bond`** | `<QUERY>` | Corporate bond yield and maturity lookup by ticker (`META`) or ISIN/CUSIP (`US037833DB33`). |
 
 ---
 
