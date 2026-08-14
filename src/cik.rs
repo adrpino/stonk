@@ -10450,7 +10450,15 @@ pub async fn resolve_cik(client: &reqwest::Client, ticker: &str) -> Result<Optio
     }
 
     let url = "https://www.sec.gov/files/company_tickers.json";
-    let res = client.get(url).send().await?;
+    let res = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "Stonk/1.0 (admin@stonk.dev)")
+        .send()
+        .await?;
+
+    if !res.status().is_success() {
+        return Ok(None);
+    }
 
     let json_data: serde_json::Value = res.json().await?;
     if let Some(obj) = json_data.as_object() {

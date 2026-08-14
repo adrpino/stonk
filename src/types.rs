@@ -1,4 +1,84 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SecForm {
+    #[value(name = "10-Q", alias = "10-q", alias = "10q")]
+    #[serde(rename = "10-Q")]
+    TenQ,
+    #[value(name = "10-K", alias = "10-k", alias = "10k")]
+    #[serde(rename = "10-K")]
+    TenK,
+    #[value(name = "8-K", alias = "8-k", alias = "8k")]
+    #[serde(rename = "8-K")]
+    EightK,
+    #[value(name = "4", alias = "form4")]
+    #[serde(rename = "4")]
+    Four,
+    #[value(name = "S-1", alias = "s-1", alias = "s1")]
+    #[serde(rename = "S-1")]
+    S1,
+    #[value(name = "S-3", alias = "s-3", alias = "s3")]
+    #[serde(rename = "S-3")]
+    S3,
+    #[value(name = "6-K", alias = "6-k", alias = "6k")]
+    #[serde(rename = "6-K")]
+    SixK,
+    #[value(name = "20-F", alias = "20-f", alias = "20f")]
+    #[serde(rename = "20-F")]
+    TwentyF,
+}
+
+impl SecForm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SecForm::TenQ => "10-Q",
+            SecForm::TenK => "10-K",
+            SecForm::EightK => "8-K",
+            SecForm::Four => "4",
+            SecForm::S1 => "S-1",
+            SecForm::S3 => "S-3",
+            SecForm::SixK => "6-K",
+            SecForm::TwentyF => "20-F",
+        }
+    }
+}
+
+impl fmt::Display for SecForm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Quarter {
+    #[value(name = "Q1", alias = "q1", alias = "1")]
+    Q1,
+    #[value(name = "Q2", alias = "q2", alias = "2")]
+    Q2,
+    #[value(name = "Q3", alias = "q3", alias = "3")]
+    Q3,
+    #[value(name = "Q4", alias = "q4", alias = "4")]
+    Q4,
+}
+
+impl Quarter {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Quarter::Q1 => "Q1",
+            Quarter::Q2 => "Q2",
+            Quarter::Q3 => "Q3",
+            Quarter::Q4 => "Q4",
+        }
+    }
+}
+
+impl fmt::Display for Quarter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -79,9 +159,9 @@ pub struct SecArgs {
     /// Stock ticker symbol (e.g. NVDA, AAPL, TSLA)
     pub ticker: String,
 
-    /// SEC filing form type (e.g. 10-K, 10-Q, 8-K, 4)
+    /// SEC filing form type (10-K, 10-Q, 8-K, 4, S-1, S-3, 6-K, 20-F)
     #[arg(value_name = "FORM", default_value = "10-Q")]
-    pub form: String,
+    pub form: SecForm,
 
     /// Parse SEC filing HTML document into clean markdown tables and MD&A commentary
     #[arg(short = 'p', long = "parse", default_value_t = false)]
@@ -93,9 +173,9 @@ pub struct TranscriptArgs {
     /// Stock ticker symbol (e.g. AAPL, META, MSFT, NVDA)
     pub ticker: String,
 
-    /// Fiscal quarter for transcript (e.g. Q1, Q2, Q3, Q4)
+    /// Fiscal quarter for transcript (Q1, Q2, Q3, Q4)
     #[arg(short = 'q', long, value_name = "QUARTER", default_value = "Q3")]
-    pub quarter: String,
+    pub quarter: Quarter,
 
     /// Fiscal year for transcript (e.g. 2026)
     #[arg(short = 'y', long, value_name = "YEAR", default_value_t = 2026)]
@@ -150,7 +230,7 @@ mod tests {
             cli.command,
             Some(Commands::Sec(SecArgs {
                 ticker: "NVDA".to_string(),
-                form: "10-Q".to_string(),
+                form: SecForm::TenQ,
                 parse: false,
             }))
         );
@@ -164,10 +244,98 @@ mod tests {
             cli.command,
             Some(Commands::Sec(SecArgs {
                 ticker: "NVDA".to_string(),
-                form: "10-K".to_string(),
+                form: SecForm::TenK,
                 parse: true,
             }))
         );
+    }
+
+    #[test]
+    fn test_subcommand_sec_case_insensitive_aliases() {
+        let cli_10k = Cli::try_parse_from(["stonk", "sec", "AAPL", "10k"]).unwrap();
+        assert_eq!(
+            cli_10k.command,
+            Some(Commands::Sec(SecArgs {
+                ticker: "AAPL".to_string(),
+                form: SecForm::TenK,
+                parse: false,
+            }))
+        );
+
+        let cli_8k = Cli::try_parse_from(["stonk", "sec", "TSLA", "8-k"]).unwrap();
+        assert_eq!(
+            cli_8k.command,
+            Some(Commands::Sec(SecArgs {
+                ticker: "TSLA".to_string(),
+                form: SecForm::EightK,
+                parse: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn test_sec_form_enum_display_and_from_str() {
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("10-Q", true).unwrap(),
+            SecForm::TenQ
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("10q", true).unwrap(),
+            SecForm::TenQ
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("10-K", true).unwrap(),
+            SecForm::TenK
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("8-K", true).unwrap(),
+            SecForm::EightK
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("4", true).unwrap(),
+            SecForm::Four
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("S-1", true).unwrap(),
+            SecForm::S1
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("S-3", true).unwrap(),
+            SecForm::S3
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("6-K", true).unwrap(),
+            SecForm::SixK
+        );
+        assert_eq!(
+            <SecForm as ValueEnum>::from_str("20-F", true).unwrap(),
+            SecForm::TwentyF
+        );
+        assert!(<SecForm as ValueEnum>::from_str("INVALID_FORM", true).is_err());
+
+        assert_eq!(SecForm::TenQ.to_string(), "10-Q");
+        assert_eq!(SecForm::TenK.to_string(), "10-K");
+    }
+
+    #[test]
+    fn test_quarter_enum_display_and_from_str() {
+        assert_eq!(
+            <Quarter as ValueEnum>::from_str("Q1", true).unwrap(),
+            Quarter::Q1
+        );
+        assert_eq!(
+            <Quarter as ValueEnum>::from_str("q2", true).unwrap(),
+            Quarter::Q2
+        );
+        assert_eq!(
+            <Quarter as ValueEnum>::from_str("3", true).unwrap(),
+            Quarter::Q3
+        );
+        assert_eq!(
+            <Quarter as ValueEnum>::from_str("Q4", true).unwrap(),
+            Quarter::Q4
+        );
+        assert!(<Quarter as ValueEnum>::from_str("Q5", true).is_err());
     }
 
     #[test]
@@ -177,7 +345,7 @@ mod tests {
             cli.command,
             Some(Commands::Transcript(TranscriptArgs {
                 ticker: "GOOGL".to_string(),
-                quarter: "Q3".to_string(),
+                quarter: Quarter::Q3,
                 year: 2026,
             }))
         );
@@ -201,7 +369,7 @@ mod tests {
             cli.command,
             Some(Commands::Transcript(TranscriptArgs {
                 ticker: "AAPL".to_string(),
-                quarter: "Q1".to_string(),
+                quarter: Quarter::Q1,
                 year: 2025,
             }))
         );

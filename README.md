@@ -8,7 +8,7 @@ A high-performance Rust CLI utility that aggregates financial valuation metrics,
 
 - **Valuation & Fundamentals (`stonk quote` / `stonk <TICKER>`):** Trailing/Forward P/E, PEG, EV/EBITDA, Price/Sales, Price/Book, operating margins, free cash flow, return on equity, and upcoming earnings dates.
 - **Historical Price Trends (`-H, --history`):** Token-optimized monthly candles (`1y`, `2y`, `5y`, `10y`, `max`) with calculated performance metrics (52-week drawdown, 1-year and 5-year returns) consuming `< 500` tokens for 5 years of data.
-- **SEC EDGAR Filings (`stonk sec`):** Real-time lookup of 10-K, 10-Q, 8-K, and Form 4 filings with direct document URLs. Automatically parses filing HTML into markdown financial tables and MD&A commentary (`-p, --parse`).
+- **SEC EDGAR Filings (`stonk sec`):** Real-time lookup of `10-K`, `10-Q`, `8-K`, `4`, `S-1`, `S-3`, `6-K`, `20-F` filings with direct document URLs. Automatically parses filing HTML into clean markdown financial tables and MD&A commentary (`-p, --parse`).
 - **Earnings Call Transcripts (`stonk transcript`):** Formatted quarterly earnings call transcripts with executive remarks and analyst Q&A sections (`-q Q3 -y 2026`).
 - **Corporate Bond Intelligence (`stonk bond`):** Scrapes corporate debt data by stock ticker or ISIN/CUSIP (coupon rate, maturity date, current price, and Yield to Maturity).
 - **AI-First Mode (`--ai`):** Wraps data in clean markdown prompt containers optimized for direct piping into LLM CLIs (`opencode`, `claude`, `gemini-cli`).
@@ -48,7 +48,7 @@ stonk quote NVDA --compact
 # Retrieve latest 10-Q filing metadata and SEC archive link
 stonk sec NVDA
 
-# Specific form (e.g. 10-K, 8-K, Form 4)
+# Specific form (e.g. 10-K, 8-K, Form 4, S-1)
 stonk sec AAPL 10-K
 
 # Parse filing HTML into clean markdown financial tables & MD&A sections
@@ -105,8 +105,8 @@ stonk bond AAPL --ai | opencode "Evaluate Apple's corporate bond maturities and 
 | Subcommand | Arguments & Flags | Description |
 |---|---|---|
 | **`quote`** | `<TICKER> [-H <RANGE>]` | Valuation fundamentals and historical monthly price candles (`1y`, `2y`, `5y`, `10y`, `max`). |
-| **`sec`** | `<TICKER> [FORM] [-p, --parse]` | SEC filing metadata and HTML table/MD&A parsing (`10-K`, `10-Q`, `8-K`, `4`). |
-| **`transcript`** | `<TICKER> [-q <QUARTER>] [-y <YEAR>]` | Quarterly earnings call transcripts (`Q1`..`Q4`, default year `2026`). |
+| **`sec`** | `<TICKER> [FORM] [-p, --parse]` | SEC filing metadata and HTML table/MD&A parsing (`10-K`, `10-Q`, `8-K`, `4`, `S-1`, `S-3`, `6-K`, `20-F`). |
+| **`transcript`** | `<TICKER> [-q <QUARTER>] [-y <YEAR>]` | Quarterly earnings call transcripts (`Q1`, `Q2`, `Q3`, `Q4`, default year `2026`). |
 | **`bond`** | `<QUERY>` | Corporate bond yield and maturity lookup by ticker (`META`) or ISIN/CUSIP (`US30303M8B15`). |
 
 ---
@@ -120,6 +120,9 @@ cargo fmt --check
 # Lint with clippy (zero warnings enforced)
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Run unit test suite
+# Run offline unit test suite (runs in milliseconds)
 cargo test
+
+# Run live end-to-end network integration tests against SEC/Yahoo feeds
+cargo test --test live_integration -- --ignored
 ```

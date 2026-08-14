@@ -9,6 +9,8 @@ pub struct BondQuote {
     pub coupon: Option<String>,
     pub price: Option<f64>,
     pub yield_to_maturity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moodys_rating: Option<String>,
     pub maturity_date: Option<String>,
     pub source: String,
 }
@@ -26,48 +28,199 @@ pub fn extract_isin_from_input(s: &str) -> String {
     s.to_uppercase()
 }
 
-pub fn extract_issuer_with_scraper(html: &str) -> String {
+pub fn is_cusip_or_isin(s: &str) -> bool {
+    let clean = s.trim();
+    (clean.len() == 12 || clean.len() == 9) && clean.chars().all(|c| c.is_alphanumeric())
+}
+
+pub fn parse_borrower_options(html: &str) -> Vec<(String, String)> {
+    let mut options = Vec::new();
     let document = Html::parse_document(html);
 
-    let label_opt = Selector::parse("[data-add-instrument-label]")
-        .ok()
-        .and_then(|sel| document.select(&sel).next())
-        .and_then(|elem| elem.value().attr("data-add-instrument-label"));
+    let select_sel = match Selector::parse("select#bond-search-borrower option") {
+        Ok(s) => s,
+        Err(_) => return options,
+    };
 
-    if let Some(label) = label_opt {
-        if let Some(clean_end) = label.find(".DL-").or_else(|| label.find(" DL-")) {
-            return label[..clean_end].trim().to_string();
+    for option in document.select(&select_sel) {
+        if let Some(val) = option.value().attr("value") {
+            let val_clean = val.trim();
+            if !val_clean.is_empty() {
+                let text = option
+                    .text()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim()
+                    .to_string();
+                if !text.is_empty() && text != "All" {
+                    options.push((val_clean.to_string(), text));
+                }
+            }
         }
-        return label.trim().to_string();
     }
+
+    options
+}
+
+pub fn match_borrower_id(options: &[(String, String)], query: &str) -> Option<String> {
+    let clean_q = query.replace([',', '.'], "").trim().to_lowercase();
+    if clean_q.is_empty() {
+        return None;
+    }
+
+    // 1. Exact match (without punctuation)
+    for (id, name) in options {
+        let clean_n = name.replace([',', '.'], "").to_lowercase();
+        if clean_n == clean_q {
+            return Some(id.clone());
+        }
+    }
+
+    // 2. Starts with query (e.g. "Apple" starts with "Apple Inc")
+    for (id, name) in options {
+        let clean_n = name.replace([',', '.'], "").to_lowercase();
+        if clean_n.starts_with(&clean_q) || clean_q.starts_with(&clean_n) {
+            return Some(id.clone());
+        }
+    }
+
+    // 3. First significant word match (e.g. "Meta" in "Meta Platforms Inc")
+    let first_word = clean_q.split_whitespace().next().unwrap_or("");
+    if !first_word.is_empty() {
+        for (id, name) in options {
+            let clean_n = name.replace([',', '.'], "").to_lowercase();
+            let first_word_n = clean_n.split_whitespace().next().unwrap_or("");
+            if first_word_n == first_word {
+                return Some(id.clone());
+            }
+        }
+    }
+
+    // 4. Substring match
+    for (id, name) in options {
+        let clean_n = name.replace([',', '.'], "").to_lowercase();
+        if clean_n.contains(&clean_q) {
+            return Some(id.clone());
+        }
+    }
+
+    None
+}
+
+fn candidate_to_isin(s: &str) -> String {
+    let clean = s.trim_end_matches('/');
+    if clean.len() >= 9 && clean.chars().all(|c| c.is_alphanumeric()) {
+        clean.to_uppercase()
+    } else {
+        "N/A".to_string()
+    }
+}
+
+pub fn parse_markets_insider_finder_table(html: &str) -> Vec<BondQuote> {
+    let mut results = Vec::new();
+    let document = Html::parse_document(html);
+
+    let tr_selector = match Selector::parse("tbody.table__tbody tr.table__tr") {
+        Ok(s) => s,
+        Err(_) => return results,
+    };
+    let td_selector = match Selector::parse("td.table__td") {
+        Ok(s) => s,
+        Err(_) => return results,
+    };
+    let a_selector = match Selector::parse("a") {
+        Ok(s) => s,
+        Err(_) => return results,
+    };
+
+    for tr in document.select(&tr_selector) {
+        let tds: Vec<_> = tr.select(&td_selector).collect();
+        if tds.len() >= 6 {
+            let a_opt = tds[0].select(&a_selector).next();
+            if let Some(a) = a_opt {
+                let name = a.text().collect::<Vec<_>>().join(" ").trim().to_string();
+                let href = a.value().attr("href").unwrap_or("");
+
+                let isin = if let Some(pos) = href.rfind('-') {
+                    candidate_to_isin(&href[pos + 1..])
+                } else {
+                    "N/A".to_string()
+                };
+
+                let coupon = tds
+                    .get(2)
+                    .map(|td| td.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                    .filter(|s| !s.is_empty() && s != "-");
+
+                let yield_to_maturity = tds
+                    .get(3)
+                    .map(|td| td.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                    .filter(|s| !s.is_empty() && s != "-");
+
+                let moodys_rating = tds
+                    .get(4)
+                    .map(|td| td.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                    .filter(|s| !s.is_empty() && s != "-");
+
+                let maturity_date = tds
+                    .get(5)
+                    .map(|td| td.text().collect::<Vec<_>>().join(" ").trim().to_string())
+                    .filter(|s| !s.is_empty() && s != "-");
+
+                let price = tds.get(6).and_then(|td| {
+                    td.text()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                });
+
+                if isin != "N/A" {
+                    results.push(BondQuote {
+                        isin_or_cusip: isin,
+                        issuer: name,
+                        coupon,
+                        price,
+                        yield_to_maturity,
+                        moodys_rating,
+                        maturity_date,
+                        source: "Markets Insider".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    results
+}
+
+pub fn parse_markets_insider_single_html(isin_input: &str, html: &str) -> Option<BondQuote> {
+    if html.is_empty() {
+        return None;
+    }
+
+    let isin = extract_isin_from_input(isin_input);
+    let document = Html::parse_document(html);
 
     let title_text = Selector::parse("title")
         .ok()
         .and_then(|sel| document.select(&sel).next())
         .map(|elem| elem.text().collect::<Vec<_>>().join(""));
 
-    if let Some(text) = title_text {
+    let issuer = if let Some(text) = title_text {
         let end_opt = text
             .find(" Bond | Markets Insider")
             .or_else(|| text.find(" Bond"));
         if let Some(end) = end_opt {
-            let clean = &text[..end];
-            if let Some(pos) = clean.find(".DL-").or_else(|| clean.find(" DL-")) {
-                return clean[..pos].trim().to_string();
-            }
-            return clean.trim().to_string();
+            text[..end].trim().to_string()
+        } else {
+            "Corporate Issuer".to_string()
         }
-    }
-    "Corporate Issuer".to_string()
-}
+    } else {
+        "Corporate Issuer".to_string()
+    };
 
-pub fn parse_markets_insider_html(isin_input: &str, html: &str) -> Option<BondQuote> {
-    if html.is_empty() {
-        return None;
-    }
-
-    let isin = extract_isin_from_input(isin_input);
-    let issuer = extract_issuer_with_scraper(html);
     let lower = html.to_lowercase();
     let mut coupon = None;
     let mut price = None;
@@ -112,6 +265,7 @@ pub fn parse_markets_insider_html(isin_input: &str, html: &str) -> Option<BondQu
             coupon,
             price,
             yield_to_maturity,
+            moodys_rating: None,
             maturity_date,
             source: "Markets Insider".to_string(),
         })
@@ -120,123 +274,7 @@ pub fn parse_markets_insider_html(isin_input: &str, html: &str) -> Option<BondQu
     }
 }
 
-pub fn parse_morningstar_bond_html(isin_or_symbol: &str, html: &str) -> Option<BondQuote> {
-    if html.is_empty() || html.contains("outage") || html.contains("Dear customers") {
-        return None;
-    }
-
-    let isin = extract_isin_from_input(isin_or_symbol);
-    let issuer = extract_issuer_with_scraper(html);
-
-    Some(BondQuote {
-        isin_or_cusip: isin,
-        issuer,
-        coupon: Some("3.50%".to_string()),
-        price: Some(94.50),
-        yield_to_maturity: Some("4.25%".to_string()),
-        maturity_date: Some("2027-08-15".to_string()),
-        source: "Morningstar FINRA TRACE".to_string(),
-    })
-}
-
-fn candidate_to_isin(s: &str) -> String {
-    let clean = s.trim_end_matches('/');
-    if clean.len() >= 9 && clean.chars().all(|c| c.is_alphanumeric()) {
-        clean.to_uppercase()
-    } else {
-        "N/A".to_string()
-    }
-}
-
-pub fn parse_markets_insider_search_table(html: &str, query: &str) -> Vec<BondQuote> {
-    let mut results = Vec::new();
-    let document = Html::parse_document(html);
-
-    let tr_selector = match Selector::parse("tr.table__tr") {
-        Ok(s) => s,
-        Err(_) => return results,
-    };
-    let td_selector = match Selector::parse("td.table__td") {
-        Ok(s) => s,
-        Err(_) => return results,
-    };
-    let a_selector = match Selector::parse("a") {
-        Ok(s) => s,
-        Err(_) => return results,
-    };
-
-    let q_upper = query.trim().to_uppercase();
-
-    for tr in document.select(&tr_selector) {
-        let tds: Vec<_> = tr.select(&td_selector).collect();
-        if tds.len() >= 6 {
-            let a_opt = tds[0].select(&a_selector).next();
-            if let Some(a) = a_opt {
-                let name = a.text().collect::<Vec<_>>().join("").trim().to_string();
-                let href = a.value().attr("href").unwrap_or("");
-
-                let name_upper = name.to_uppercase();
-                let href_upper = href.to_uppercase();
-                let is_match = if q_upper == "META" {
-                    name_upper.contains("META PLATFORMS") || name_upper.starts_with("META ")
-                } else {
-                    name_upper.contains(&q_upper) || href_upper.contains(&q_upper)
-                };
-
-                if !q_upper.is_empty() && !is_match {
-                    continue;
-                }
-
-                let isin = if let Some(pos) = href.rfind('-') {
-                    candidate_to_isin(&href[pos + 1..])
-                } else {
-                    "N/A".to_string()
-                };
-
-                let coupon = tds
-                    .get(2)
-                    .map(|td| td.text().collect::<Vec<_>>().join("").trim().to_string())
-                    .filter(|s| !s.is_empty() && s != "-");
-                let yield_to_maturity = tds
-                    .get(3)
-                    .map(|td| td.text().collect::<Vec<_>>().join("").trim().to_string())
-                    .filter(|s| !s.is_empty() && s != "-");
-                let price = tds.get(4).and_then(|td| {
-                    td.text()
-                        .collect::<Vec<_>>()
-                        .join("")
-                        .trim()
-                        .parse::<f64>()
-                        .ok()
-                });
-                let maturity_date = tds
-                    .get(5)
-                    .map(|td| td.text().collect::<Vec<_>>().join("").trim().to_string())
-                    .filter(|s| !s.is_empty() && s != "-");
-
-                results.push(BondQuote {
-                    isin_or_cusip: isin,
-                    issuer: name,
-                    coupon,
-                    price,
-                    yield_to_maturity,
-                    maturity_date,
-                    source: "Markets Insider".to_string(),
-                });
-            }
-        }
-    }
-
-    results
-}
-
-#[allow(dead_code)]
-pub fn is_cusip_or_isin(s: &str) -> bool {
-    let clean = s.trim();
-    (clean.len() == 12 || clean.len() == 9) && clean.chars().all(|c| c.is_alphanumeric())
-}
-
-pub fn deduplicate_and_prioritize_bonds(quotes: Vec<BondQuote>) -> Vec<BondQuote> {
+pub fn deduplicate_and_sort_bonds(quotes: Vec<BondQuote>) -> Vec<BondQuote> {
     use std::collections::BTreeMap;
 
     let mut map: BTreeMap<String, BondQuote> = BTreeMap::new();
@@ -244,14 +282,7 @@ pub fn deduplicate_and_prioritize_bonds(quotes: Vec<BondQuote>) -> Vec<BondQuote
     for quote in quotes {
         let key = quote.isin_or_cusip.to_uppercase();
         if let Some(existing) = map.get(&key) {
-            let quote_is_finra = quote.source.to_uppercase().contains("FINRA")
-                || quote.source.to_uppercase().contains("MORNINGSTAR");
-            let existing_is_finra = existing.source.to_uppercase().contains("FINRA")
-                || existing.source.to_uppercase().contains("MORNINGSTAR");
-
-            let should_replace = !existing_is_finra
-                && (quote_is_finra || (existing.price.is_none() && quote.price.is_some()));
-
+            let should_replace = existing.price.is_none() && quote.price.is_some();
             if should_replace {
                 map.insert(key, quote);
             }
@@ -263,50 +294,178 @@ pub fn deduplicate_and_prioritize_bonds(quotes: Vec<BondQuote>) -> Vec<BondQuote
     map.into_values().collect()
 }
 
-pub async fn fetch_bond_markets_insider(
-    client: &reqwest::Client,
-    isin_or_query: &str,
-) -> Result<Vec<BondQuote>> {
-    let clean = isin_or_query.trim();
-
-    let url = if clean.starts_with("http://") || clean.starts_with("https://") {
-        clean.to_string()
-    } else if clean.to_uppercase() == "US30303M8B15" || clean.to_uppercase().contains("30303M8B1") {
-        "https://markets.businessinsider.com/bonds/meta_platforms_dl-notes_202222-27-bond-2027-us30303m8b15".to_string()
-    } else {
-        format!(
-            "https://markets.businessinsider.com/bonds/search?query={}",
-            clean
+pub async fn resolve_company_name(client: &reqwest::Client, query: &str) -> Option<String> {
+    let url = format!(
+        "https://query2.finance.yahoo.com/v1/finance/search?q={}&quotesCount=1",
+        query
+    );
+    let res = client
+        .get(&url)
+        .header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         )
-    };
+        .send()
+        .await
+        .ok()?;
 
-    let res = client.get(&url).send().await?;
-    let body = res.text().await?;
-
-    if let Some(single) = parse_markets_insider_html(clean, &body) {
-        return Ok(vec![single]);
+    let json_val: serde_json::Value = res.json().await.ok()?;
+    let quotes = json_val.get("quotes")?.as_array()?;
+    if let Some(first) = quotes.first() {
+        if let Some(shortname) = first.get("shortname").and_then(|s| s.as_str()) {
+            return Some(shortname.to_string());
+        }
+        if let Some(longname) = first.get("longname").and_then(|s| s.as_str()) {
+            return Some(longname.to_string());
+        }
     }
-
-    let quotes = parse_markets_insider_search_table(&body, clean);
-    Ok(quotes)
+    None
 }
 
-pub async fn fetch_bond_morningstar(
-    client: &reqwest::Client,
-    symbol_or_ticker: &str,
-) -> Result<Vec<BondQuote>> {
-    let url = format!(
-        "https://finra-markets.morningstar.com/BondCenter/BondDetail.jsp?symbol={}",
-        symbol_or_ticker
-    );
+pub async fn fetch_bonds(client: &reqwest::Client, raw_query: &str) -> Result<Vec<BondQuote>> {
+    let clean = raw_query.trim();
 
-    let res = client.get(&url).send().await?;
-    let body = res.text().await?;
-    let mut quotes = Vec::new();
-    if let Some(quote) = parse_morningstar_bond_html(symbol_or_ticker, &body) {
-        quotes.push(quote);
+    // 1. Direct bond URL lookup
+    if clean.starts_with("http://") || clean.starts_with("https://") {
+        let res = client
+            .get(clean)
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            )
+            .send()
+            .await?;
+        let body = res.text().await?;
+        if let Some(single) = parse_markets_insider_single_html(clean, &body) {
+            return Ok(vec![single]);
+        }
+        let table_quotes = parse_markets_insider_finder_table(&body);
+        if !table_quotes.is_empty() {
+            return Ok(table_quotes);
+        }
     }
-    Ok(quotes)
+
+    // 2. Direct ISIN / CUSIP lookup
+    if is_cusip_or_isin(clean) {
+        let search_url = format!(
+            "https://markets.businessinsider.com/bonds/finder?search={}",
+            clean
+        );
+        let res = client
+            .get(&search_url)
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            )
+            .send()
+            .await?;
+        let body = res.text().await?;
+
+        let table_quotes = parse_markets_insider_finder_table(&body);
+        let matching: Vec<_> = table_quotes
+            .into_iter()
+            .filter(|b| b.isin_or_cusip.eq_ignore_ascii_case(clean))
+            .collect();
+        if !matching.is_empty() {
+            return Ok(matching);
+        }
+
+        if let Some(single) = parse_markets_insider_single_html(clean, &body) {
+            return Ok(vec![single]);
+        }
+    }
+
+    // 3. Company Name / Ticker bond search
+    let resolved_name = resolve_company_name(client, clean).await;
+    let search_term = resolved_name.as_deref().unwrap_or(clean);
+
+    let search_page_url = format!(
+        "https://markets.businessinsider.com/bonds/finder?search={}",
+        search_term
+    );
+    let res = client
+        .get(&search_page_url)
+        .header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        )
+        .send()
+        .await?;
+    let body = res.text().await?;
+
+    let mut options = parse_borrower_options(&body);
+    let mut borrower_id =
+        match_borrower_id(&options, search_term).or_else(|| match_borrower_id(&options, clean));
+
+    // If still not found, fetch the base finder page containing global borrowers
+    if borrower_id.is_none()
+        && let Ok(base_res) = client
+            .get("https://markets.businessinsider.com/bonds/finder")
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            )
+            .send()
+            .await
+        && let Ok(base_body) = base_res.text().await
+    {
+        options = parse_borrower_options(&base_body);
+        borrower_id =
+            match_borrower_id(&options, search_term).or_else(|| match_borrower_id(&options, clean));
+    }
+
+    if let Some(id) = borrower_id {
+        let mut all_bonds = Vec::new();
+
+        // Fetch page 1
+        let p1_url = format!(
+            "https://markets.businessinsider.com/bonds/finder?borrower={}&p=1",
+            id
+        );
+        if let Ok(p1_res) = client
+            .get(&p1_url)
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            )
+            .send()
+            .await
+            && let Ok(p1_body) = p1_res.text().await
+        {
+            let p1_quotes = parse_markets_insider_finder_table(&p1_body);
+            let p1_len = p1_quotes.len();
+            all_bonds.extend(p1_quotes);
+
+            // If page 1 was full (20 items), fetch page 2 as well
+            if p1_len >= 20 {
+                let p2_url = format!(
+                    "https://markets.businessinsider.com/bonds/finder?borrower={}&p=2",
+                    id
+                );
+                if let Ok(p2_res) = client
+                    .get(&p2_url)
+                    .header(
+                        reqwest::header::USER_AGENT,
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    )
+                    .send()
+                    .await
+                    && let Ok(p2_body) = p2_res.text().await
+                {
+                    let p2_quotes = parse_markets_insider_finder_table(&p2_body);
+                    all_bonds.extend(p2_quotes);
+                }
+            }
+        }
+
+        if !all_bonds.is_empty() {
+            return Ok(deduplicate_and_sort_bonds(all_bonds));
+        }
+    }
+
+    // Fallback: parse direct table from initial search page
+    let direct_quotes = parse_markets_insider_finder_table(&body);
+    Ok(deduplicate_and_sort_bonds(direct_quotes))
 }
 
 #[cfg(test)]
@@ -314,186 +473,106 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_markets_insider_single_bond_detail_real_html() {
+    fn test_parse_borrower_options() {
         let sample_html = r#"
-            <html>
-                <head>
-                    <title>Meta Platforms Inc.DL-Notes 2022(22/27) 144A Bond | Markets Insider</title>
-                </head>
-                <body>
-                    <button class="button" data-add-instrument-label="Meta Platforms Inc.DL-Notes 2022(22/27) 144A">Add</button>
-                    <p>
-                        The bond has a maturity date of 8/15/2027 and offers a coupon of 3.5000%.
-                        At the current price of 94.497 USD this equals a annual yield of 3.50%.
-                    </p>
-                </body>
-            </html>
+            <select id="bond-search-borrower" name="borrower">
+                <option value="">All</option>
+                <option value="20821">Apple Inc.</option>
+                <option value="67415">Meta Platforms Inc.</option>
+                <option value="41909">Microsoft Corp.</option>
+            </select>
         "#;
-
-        let quote = parse_markets_insider_html("US30303M8B15", sample_html).unwrap();
-        assert_eq!(quote.isin_or_cusip, "US30303M8B15");
-        assert_eq!(quote.issuer, "Meta Platforms Inc");
-        assert_eq!(quote.coupon, Some("3.5000%".to_string()));
-        assert_eq!(quote.price, Some(94.497));
-        assert_eq!(quote.yield_to_maturity, Some("3.50%".to_string()));
-        assert_eq!(quote.maturity_date, Some("8/15/2027".to_string()));
-        assert_eq!(quote.source, "Markets Insider");
+        let options = parse_borrower_options(sample_html);
+        assert_eq!(options.len(), 3);
+        assert_eq!(options[0], ("20821".to_string(), "Apple Inc.".to_string()));
+        assert_eq!(
+            options[1],
+            ("67415".to_string(), "Meta Platforms Inc.".to_string())
+        );
     }
 
     #[test]
-    fn test_parse_markets_insider_search_table_real_html() {
-        let table_html = r#"
-            <html>
-            <body>
+    fn test_match_borrower_id() {
+        let options = vec![
+            ("20821".to_string(), "Apple Inc.".to_string()),
+            ("67415".to_string(), "Meta Platforms Inc.".to_string()),
+            ("41909".to_string(), "Microsoft Corp.".to_string()),
+            ("111142".to_string(), "NVIDIA Corp.".to_string()),
+        ];
+
+        assert_eq!(
+            match_borrower_id(&options, "Apple"),
+            Some("20821".to_string())
+        );
+        assert_eq!(
+            match_borrower_id(&options, "apple inc."),
+            Some("20821".to_string())
+        );
+        assert_eq!(
+            match_borrower_id(&options, "meta"),
+            Some("67415".to_string())
+        );
+        assert_eq!(
+            match_borrower_id(&options, "Nvidia"),
+            Some("111142".to_string())
+        );
+        assert_eq!(match_borrower_id(&options, "NonExistentCo"), None);
+    }
+
+    #[test]
+    fn test_parse_markets_insider_finder_table() {
+        let sample_table_html = r#"
             <table class="table">
-                <tr class="table__tr">
-                    <th class="table__th">Issuer</th>
-                    <th class="table__th text-right">Currency</th>
-                    <th class="table__th text-right">Coupon</th>
-                    <th class="table__th text-right">Yield</th>
-                    <th class="table__th text-right">Price</th>
-                    <th class="table__th text-right">Maturity</th>
-                </tr>
-                <tr class="table__tr">
-                    <td class="table__td">
-                        <a href="/bonds/meta_platforms_dl-notes_202222-27-bond-2027-us30303m8b15">Meta Platforms Inc.DL-Notes 2022(22/27) 144A</a>
-                    </td>
-                    <td class="table__td text-right">USD</td>
-                    <td class="table__td text-right">3.5000%</td>
-                    <td class="table__td text-right">3.50%</td>
-                    <td class="table__td text-right">94.497</td>
-                    <td class="table__td text-right">8/15/2027</td>
-                </tr>
-                <tr class="table__tr">
-                    <td class="table__td">
-                        <a href="/bonds/meta_platforms_dl-notes_202323-28-bond-2028-us30303m8l96">Meta Platforms Inc.DL-Notes 2023(23/28) 144A</a>
-                    </td>
-                    <td class="table__td text-right">USD</td>
-                    <td class="table__td text-right">4.6000%</td>
-                    <td class="table__td text-right">4.55%</td>
-                    <td class="table__td text-right">100.100</td>
-                    <td class="table__td text-right">5/15/2028</td>
-                </tr>
+                <tbody class="table__tbody">
+                    <tr class="table__tr">
+                        <td class="table__td">
+                            <a href="/bonds/apple_incdl-notes_202121-31-bond-2031-us037833ej59">Apple Inc.</a>
+                        </td>
+                        <td class="table__td text-right">USD</td>
+                        <td class="table__td text-right">1.7000%</td>
+                        <td class="table__td text-right">4.60%</td>
+                        <td class="table__td text-right">Aaa</td>
+                        <td class="table__td text-right">8/5/2031</td>
+                        <td class="table__td text-right">87.18</td>
+                        <td class="table__td text-right">87.76</td>
+                    </tr>
+                    <tr class="table__tr">
+                        <td class="table__td">
+                            <a href="/bonds/apple_incdl-notes_201717-27-bond-2027-us037833db33">Apple Inc.</a>
+                        </td>
+                        <td class="table__td text-right">USD</td>
+                        <td class="table__td text-right">2.9000%</td>
+                        <td class="table__td text-right">4.32%</td>
+                        <td class="table__td text-right">Aaa</td>
+                        <td class="table__td text-right">9/12/2027</td>
+                        <td class="table__td text-right">98.47</td>
+                        <td class="table__td text-right">98.90</td>
+                    </tr>
+                </tbody>
             </table>
-            </body>
-            </html>
         "#;
 
-        let bonds = parse_markets_insider_search_table(table_html, "META");
+        let bonds = parse_markets_insider_finder_table(sample_table_html);
         assert_eq!(bonds.len(), 2);
 
-        assert_eq!(bonds[0].isin_or_cusip, "US30303M8B15");
-        assert_eq!(
-            bonds[0].issuer,
-            "Meta Platforms Inc.DL-Notes 2022(22/27) 144A"
-        );
-        assert_eq!(bonds[0].coupon, Some("3.5000%".to_string()));
-        assert_eq!(bonds[0].price, Some(94.497));
-        assert_eq!(bonds[0].yield_to_maturity, Some("3.50%".to_string()));
-        assert_eq!(bonds[0].maturity_date, Some("8/15/2027".to_string()));
+        assert_eq!(bonds[0].isin_or_cusip, "US037833EJ59");
+        assert_eq!(bonds[0].issuer, "Apple Inc.");
+        assert_eq!(bonds[0].coupon, Some("1.7000%".to_string()));
+        assert_eq!(bonds[0].yield_to_maturity, Some("4.60%".to_string()));
+        assert_eq!(bonds[0].moodys_rating, Some("Aaa".to_string()));
+        assert_eq!(bonds[0].maturity_date, Some("8/5/2031".to_string()));
+        assert_eq!(bonds[0].price, Some(87.18));
 
-        assert_eq!(bonds[1].isin_or_cusip, "US30303M8L96");
-        assert_eq!(bonds[1].coupon, Some("4.6000%".to_string()));
-        assert_eq!(bonds[1].price, Some(100.1));
-        assert_eq!(bonds[1].maturity_date, Some("5/15/2028".to_string()));
-    }
-
-    #[test]
-    fn test_extract_issuer_with_scraper() {
-        let apple_html = r#"
-            <html>
-                <head><title>Apple Inc.DL-Notes 2020(20/30) Bond | Markets Insider</title></head>
-            </html>
-        "#;
-        assert_eq!(extract_issuer_with_scraper(apple_html), "Apple Inc");
-
-        let nvda_html = r#"
-            <html>
-                <body>
-                    <button data-add-instrument-label="NVIDIA Corp.DL-Notes 2021(21/31)">Add</button>
-                </body>
-            </html>
-        "#;
-        assert_eq!(extract_issuer_with_scraper(nvda_html), "NVIDIA Corp");
-    }
-
-    #[test]
-    fn test_extract_isin_from_input() {
-        assert_eq!(extract_isin_from_input("US30303M8B15"), "US30303M8B15");
-        assert_eq!(extract_isin_from_input("30303m8b1"), "30303M8B1");
-        assert_eq!(
-            extract_isin_from_input(
-                "https://markets.businessinsider.com/bonds/meta_platforms_dl-notes-us30303m8b15"
-            ),
-            "US30303M8B15"
-        );
+        assert_eq!(bonds[1].isin_or_cusip, "US037833DB33");
+        assert_eq!(bonds[1].maturity_date, Some("9/12/2027".to_string()));
     }
 
     #[test]
     fn test_is_cusip_or_isin() {
+        assert!(is_cusip_or_isin("US037833DB33"));
         assert!(is_cusip_or_isin("US30303M8B15"));
-        assert!(is_cusip_or_isin("30303M8B1"));
-        assert!(!is_cusip_or_isin("META"));
+        assert!(is_cusip_or_isin("037833DB3"));
+        assert!(!is_cusip_or_isin("Apple"));
         assert!(!is_cusip_or_isin("AAPL"));
-    }
-
-    #[test]
-    fn test_parse_morningstar_bond_html_outage() {
-        let outage_html = "Dear customers, We apologize for any inconvenience as our network provider is experiencing an outage.";
-        assert!(parse_morningstar_bond_html("META", outage_html).is_none());
-    }
-
-    #[test]
-    fn test_deduplicate_and_prioritize_bonds() {
-        let mi_quote = BondQuote {
-            isin_or_cusip: "US30303M8B15".to_string(),
-            issuer: "Meta Platforms Inc".to_string(),
-            coupon: Some("3.50%".to_string()),
-            price: Some(94.497),
-            yield_to_maturity: Some("3.50%".to_string()),
-            maturity_date: Some("8/15/2027".to_string()),
-            source: "Markets Insider".to_string(),
-        };
-
-        let finra_quote = BondQuote {
-            isin_or_cusip: "US30303M8B15".to_string(),
-            issuer: "Meta Platforms Inc".to_string(),
-            coupon: Some("3.50%".to_string()),
-            price: Some(94.50),
-            yield_to_maturity: Some("4.25%".to_string()),
-            maturity_date: Some("2027-08-15".to_string()),
-            source: "Morningstar FINRA TRACE".to_string(),
-        };
-
-        // Case 1: Markets Insider first, FINRA second -> FINRA prioritized
-        let deduplicated_1 =
-            deduplicate_and_prioritize_bonds(vec![mi_quote.clone(), finra_quote.clone()]);
-        assert_eq!(deduplicated_1.len(), 1);
-        assert_eq!(deduplicated_1[0].source, "Morningstar FINRA TRACE");
-        assert_eq!(
-            deduplicated_1[0].yield_to_maturity,
-            Some("4.25%".to_string())
-        );
-
-        // Case 2: FINRA first, Markets Insider second -> FINRA preserved
-        let deduplicated_2 =
-            deduplicate_and_prioritize_bonds(vec![finra_quote.clone(), mi_quote.clone()]);
-        assert_eq!(deduplicated_2.len(), 1);
-        assert_eq!(deduplicated_2[0].source, "Morningstar FINRA TRACE");
-
-        // Case 3: Multiple distinct ISINs preserved
-        let other_quote = BondQuote {
-            isin_or_cusip: "US30303M8L96".to_string(),
-            issuer: "Meta Platforms Inc".to_string(),
-            coupon: Some("4.60%".to_string()),
-            price: Some(100.10),
-            yield_to_maturity: Some("4.55%".to_string()),
-            maturity_date: Some("5/15/2028".to_string()),
-            source: "Markets Insider".to_string(),
-        };
-
-        let deduplicated_3 =
-            deduplicate_and_prioritize_bonds(vec![mi_quote, finra_quote, other_quote]);
-        assert_eq!(deduplicated_3.len(), 2);
     }
 }

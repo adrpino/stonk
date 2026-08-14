@@ -1,3 +1,4 @@
+use crate::types::SecForm;
 use anyhow::{Context, Result, bail};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
@@ -360,14 +361,18 @@ pub fn parse_sec_submissions_json(
 pub async fn fetch_sec_filing(
     client: &reqwest::Client,
     ticker: &str,
-    requested_form: &str,
+    form: SecForm,
     parse_content: bool,
 ) -> Result<Option<SecFiling>> {
-    let cik = match crate::cik::get_static_cik(ticker) {
+    let ticker_upper = ticker.trim().to_uppercase();
+    let cik = match crate::cik::get_static_cik(&ticker_upper) {
         Some(c) => c.to_string(),
-        None => match crate::cik::resolve_cik(client, ticker).await? {
+        None => match crate::cik::resolve_cik(client, &ticker_upper).await? {
             Some(c) => c,
-            None => bail!("Could not resolve SEC CIK for ticker: {}", ticker),
+            None => bail!(
+                "Could not resolve SEC CIK for ticker '{}'. Please ensure this is a valid US-listed company ticker.",
+                ticker_upper
+            ),
         },
     };
 
@@ -377,13 +382,26 @@ pub async fn fetch_sec_filing(
         .header(reqwest::header::USER_AGENT, "Stonk/1.0 (admin@stonk.dev)")
         .send()
         .await
-        .with_context(|| format!("Failed to fetch SEC filings for CIK {}", cik))?;
+        .with_context(|| format!("Failed to connect to SEC EDGAR for CIK {}", cik))?;
 
-    let json_data: Value = res.json().await?;
-    let mut filing = match parse_sec_submissions_json(ticker, &cik, requested_form, &json_data) {
-        Some(f) => f,
-        None => return Ok(None),
-    };
+    if !res.status().is_success() {
+        bail!(
+            "SEC EDGAR returned HTTP status {} for CIK {}",
+            res.status(),
+            cik
+        );
+    }
+
+    let json_data: Value = res
+        .json()
+        .await
+        .with_context(|| format!("Failed to parse SEC submissions JSON for CIK {}", cik))?;
+
+    let mut filing =
+        match parse_sec_submissions_json(&ticker_upper, &cik, form.as_str(), &json_data) {
+            Some(f) => f,
+            None => return Ok(None),
+        };
 
     if parse_content {
         let html_res = client
@@ -393,6 +411,7 @@ pub async fn fetch_sec_filing(
             .await;
 
         if let Ok(html_response) = html_res
+            && html_response.status().is_success()
             && let Ok(html_text) = html_response.text().await
         {
             filing.parsed_content = Some(parse_sec_html(&html_text));

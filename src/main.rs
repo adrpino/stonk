@@ -10,7 +10,7 @@ use std::io::{self, Write};
 
 use anyhow::{Result, bail};
 use api::{create_client, fetch_yahoo_chart, fetch_yahoo_summary};
-use bonds::{deduplicate_and_prioritize_bonds, fetch_bond_markets_insider, fetch_bond_morningstar};
+use bonds::fetch_bonds;
 use clap::Parser;
 use dossier::{append_history_to_dossier, extract_ai_dossier};
 use reqwest::Client;
@@ -71,14 +71,14 @@ async fn handle_quote(client: &Client, args: &QuoteArgs, ai: bool, compact: bool
 
 async fn handle_sec(client: &Client, args: &SecArgs, ai: bool, compact: bool) -> Result<()> {
     let ticker = &args.ticker;
-    let form_type = &args.form;
+    let form = args.form;
     let should_parse = args.parse || ai;
-    let sec_filing = fetch_sec_filing(client, ticker, form_type, should_parse).await?;
+    let sec_filing = fetch_sec_filing(client, ticker, form, should_parse).await?;
 
     if ai {
         safe_println(&format!(
             "### SEC FILING ({}) FOR {}\n",
-            form_type.to_uppercase(),
+            form.as_str(),
             ticker.to_uppercase()
         ));
         if let Some(f) = &sec_filing {
@@ -109,10 +109,10 @@ async fn handle_transcript(
     compact: bool,
 ) -> Result<()> {
     let ticker = &args.ticker;
-    let quarter = &args.quarter;
+    let quarter = args.quarter;
     let year = args.year;
 
-    let transcript = fetch_wsb_transcript(client, ticker, quarter, year).await?;
+    let transcript = fetch_wsb_transcript(client, ticker, quarter.as_str(), year).await?;
 
     if ai {
         safe_println(&format!(
@@ -133,20 +133,7 @@ async fn handle_transcript(
 
 async fn handle_bond(client: &Client, args: &BondArgs, ai: bool, compact: bool) -> Result<()> {
     let bond_query = &args.query;
-    let (mi_res, ms_res) = tokio::join!(
-        fetch_bond_markets_insider(client, bond_query),
-        fetch_bond_morningstar(client, bond_query)
-    );
-
-    let mut raw_results = Vec::new();
-    if let Ok(mi_list) = mi_res {
-        raw_results.extend(mi_list);
-    }
-    if let Ok(ms_list) = ms_res {
-        raw_results.extend(ms_list);
-    }
-
-    let results = deduplicate_and_prioritize_bonds(raw_results);
+    let results = fetch_bonds(client, bond_query).await?;
 
     if ai {
         safe_println(&format!(

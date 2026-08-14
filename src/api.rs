@@ -20,6 +20,7 @@ pub fn create_client() -> Result<reqwest::Client> {
 
     let client = reqwest::Client::builder()
         .cookie_store(true)
+        .timeout(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(10))
         .default_headers(headers)
         .build()?;
