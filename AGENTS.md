@@ -36,8 +36,9 @@ cargo install --path .
 ## Architecture & Module Overview
 
 1. **CLI Interface (`src/types.rs`)**:
-   - Built using `clap` (derive feature).
-   - Supports required `<TICKER>` symbol, `--history [RANGE]` / `-H [RANGE]` for multi-year trends, `--sec [FORM]` / `-S [FORM]` for SEC EDGAR filing URLs, `--transcript` / `-t` for earnings call transcripts, `--bond [BOND]` / `-b [BOND]` for corporate debt, `--ai` for LLM prompt formatting, and `--compact` for single-line JSON output.
+   - Built using `clap` (derive subcommands feature).
+   - Implements dedicated subcommands: `quote`, `sec`, `transcript`, and `bond` with top-level shortcut resolution for ticker queries.
+   - Handles global `--ai` and `--compact` output flags.
 
 2. **Yahoo Finance API Integration (`src/api.rs`)**:
    - Built on `reqwest` and `serde_json`.
